@@ -5,7 +5,8 @@ import os
 from collections import OrderedDict
 from enum import Enum
 from functools import partial
-from typing import List
+from typing import List, Dict, Any, Union, Optional
+from argparse import Namespace
 
 import numpy as np
 import torch
@@ -16,7 +17,7 @@ from omegaconf import ListConfig
 from pytorch_lightning.utilities import rank_zero_only
 from torchvision.transforms import ToPILImage
 
-from pytorch_lightning.loggers import Logger
+from pytorch_lightning.loggers import Logger, TensorBoardLogger
 
 LOCAL_RANK = int(os.environ.get('LOCAL_RANK', -1))
 
@@ -96,7 +97,7 @@ def log_anything(logger, name, data, is_metric=False, step=None, **kwargs):
     """
     to_pil = ToPILImage()
 
-    def prepare_data(name, data, **kwargs):
+    def prepare_data(namename, data, **kwargs):
         kwargs = Batch(**kwargs)
         if isinstance(data, torch.Tensor):
             if data.ndim == 0:  # Single scalar           - Logged as point sample
@@ -141,7 +142,10 @@ def log_anything(logger, name, data, is_metric=False, step=None, **kwargs):
     if is_metric:
         logger.log_metrics(data, step=step)
     else:
-        logger.experiment.log(data)
+        if isinstance(logger, CustomTensorBoardLogger):
+            logger.log(data, step=step)
+        else:
+            logger.experiment.log(data)
 
     return data
 
@@ -176,6 +180,102 @@ def init_logger(name: str = None, logging_level=logging.DEBUG, add_stream_handle
     logger.debug(f"Logger created with name: {name}")
     return logger
 
+
+class CustomTensorBoardLogger(TensorBoardLogger):
+    def __init__(self,
+                 name,
+                 save_dir,
+                 version,
+                 log_graph,
+                 prefix,
+                 **kwargs):
+        super().__init__(name=name,
+                         save_dir=save_dir,
+                         version=version,
+                         log_graph=log_graph,
+                         prefix=prefix,
+                         **kwargs)
+        self._run_name = name
+        self._save_dir = save_dir
+        self._version = version
+
+        self.module_logger = init_logger()
+
+    def get_checkpoint_path(self):  # TODO
+        ckpt_dir = os.path.join(self.save_dir, "checkpoints")
+
+        if not os.path.exists(ckpt_dir):
+            return None
+
+        checkpoints = list(reversed(sorted(os.listdir(ckpt_dir))))
+        latest_checkpoint = checkpoints[0]
+        self.module_logger.info(
+            f"{len(checkpoints)} checkpoints found ({checkpoints}), using the latest one: {latest_checkpoint}!")
+        return os.path.join(ckpt_dir, latest_checkpoint)
+
+    @rank_zero_only
+    def log_hyperparams(
+            self, params: Union[Dict[str, Any], Namespace], metrics: Optional[Dict[str, Any]] = None
+    ) -> None:
+        string_dict = {key: str(value) for key, value in params.items()}
+        super().log_hyperparams(string_dict)
+
+    @property
+    def name(self):
+        return "CustomTensorBoardLogger"
+
+    @property
+    def save_dir(self):
+        """Return the root directory where experiment logs get saved, or `None` if the logger does not save data
+        locally."""
+        return self._save_dir
+
+    @property
+    def version(self):
+        # Return the experiment version, int or str.
+        return self._version
+
+    # @property
+    # def experiment(self):
+    #     return self
+
+    def log(self, data_dict, step: Optional[int] = None):
+        for key, data in data_dict.items():
+            if isinstance(data, wandb.Image):
+                self.log_image(data.image, name=key, step=step)
+            elif isinstance(data, list) and isinstance(data[0], wandb.Image):
+                for i, img in enumerate(data):
+                    self.log_image(img.image, name=f"{key}_{i}", step=step)
+            elif isinstance(data, wandb.Video):
+                self.log_video(data, name=key, step=step)
+            elif isinstance(data, wandb.Table):
+                self.log_histogram(data.data, name=key, step=step)
+            else:
+                self.module_logger.info(f"{key}: {data}")
+
+    def log_image(self, image, name=None, step: Optional[int] = None):
+        writer = super().experiment
+
+        image_np = np.array(image)
+        image_tensor = torch.tensor(image_np).permute(2, 0, 1)  # (C, H, W)
+
+        writer.add_image(name, image_tensor, step)
+
+    def log_hdr(self, image_tensor, name=None, step: Optional[int] = None):
+        writer = super().experiment
+        writer.add_image(name, image_tensor, step)
+
+    def log_histogram(self, data_tensor, name=None, step: Optional[int] = None):
+        writer = super().experiment
+
+        values = np.array(data_tensor['values'])
+        writer.add_histogram(name, values, step)
+
+    @rank_zero_only
+    def log_metrics(self, metrics, step):
+        # metrics is a dictionary of metric names and values
+        # your code to record metrics goes here
+        super().log_metrics(metrics, step=step)
 
 class ConsoleLogger(Logger):
     MEDIA_PATH = "wandb/latest-run/files/media/images"
@@ -407,4 +507,3 @@ def rgetattr(obj, attr, *args):
                 return obj[int(attr)]
 
     return functools.reduce(_getattr, [obj] + attr.split('.'))
-

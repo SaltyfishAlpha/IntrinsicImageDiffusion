@@ -3,7 +3,6 @@ from ldm.modules.diffusionmodules.util import timestep_embedding
 
 import torch as th
 
-
 class IIDUNetModel(UNetModel):
     def forward(self, x, timesteps=None, context=None, y=None,**kwargs):
         """

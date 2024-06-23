@@ -1,0 +1,50 @@
+_target_: iid.data.IIDDataModule
+_recursive_: False
+_convert_: object
+sampling_cfg:
+  batch_size: 1
+  num_workers: 0
+  sampler:
+    _target_: torch.utils.data.SubsetRandomSampler
+    _convert_: object
+    indices: null  # To be evaluated samples
+dataset_cfg:
+  _target_: iid.material_diffusion.data_shadow.ShadowDataset
+  root: /home/disk1/Dataset/complete_dataset/render_data_v2/train/
+  features_to_include: [ "origin", "shadow_free" ]
+  cache_size: 1
+  stage: null
+  include_metadata: False
+  transform:
+    _target_: iid.data.BatchTransform
+    transform:
+      origin:
+        _target_: torchvision.transforms.Compose
+        transforms:
+          - _target_: torchvision.transforms.ToTensor
+          - _target_: iid.data.NanToNumTransform
+#          - _target_: iid.data.FixableRandomCrop
+#            size: [ 256, 256 ]
+#            center_only: False
+#            fixing_id: sample
+          - _target_: iid.data.ImageResize
+            in_size: [ 512, 512 ]
+            out_size: [ 256, 256 ]
+          - _target_: iid.data.NormalizeRange
+            input_range: [ 0.0, 1.0 ]
+            output_range: [ -1.0, 1.0 ]
+      shadow_free:
+        _target_: torchvision.transforms.Compose
+        transforms:
+          - _target_: torchvision.transforms.ToTensor
+          - _target_: iid.data.NanToNumTransform
+#          - _target_: iid.data.FixableRandomCrop
+#            size: [ 256, 256 ]
+#            center_only: False
+#            fixing_id: sample
+          - _target_: iid.data.ImageResize
+            in_size: [ 512, 512 ]
+            out_size: [ 256, 256 ]
+          - _target_: iid.data.NormalizeRange
+            input_range: [ 0.0, 1.0 ]
+            output_range: [ -1.0, 1.0 ]

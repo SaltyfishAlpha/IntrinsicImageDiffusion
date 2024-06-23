@@ -491,6 +491,26 @@ class Clamp(torch.nn.Module):
         return f"{self.__class__.__name__}(min={self.min}, max={self.max})"
 
 
+class ImageResize(torch.nn.Module):
+    def __init__(self, in_size, out_size):
+        super().__init__()
+        self.in_size = tuple(in_size)
+        self.out_size = tuple(out_size)
+
+    def forward(self, x) -> torch.Tensor:
+        img = torch.nn.functional.interpolate(x.unsqueeze(0), size=self.out_size, mode='bilinear', align_corners=False)
+        img = img.squeeze(0)
+        return img
+
+    def inverse(self, y):
+        img = torch.nn.functional.interpolate(y.unsqueeze(0), size=self.in_size, mode='bilinear', align_corners=False)
+        img = img.squeeze(0)
+        return img
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(in_size={self.in_size}, out_size={self.out_size})"
+
+
 class FixableRandomCrop(RandomCrop):
     FIXED_PARAMS = defaultdict(lambda: None)
 

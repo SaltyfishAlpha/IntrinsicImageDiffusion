@@ -9,7 +9,7 @@ anonymous: null # enable anonymous logging
 project: "intrinsic_image_diffusion"
 log_model: False # upload lightning ckpts
 prefix: "" # a string to put at the beginning of metric keys
-entity: ""
-group: ""
+entity: "saltyfishalpha"
+group: "saltyfish-alpha"
 tags: [ ]
 job_type: ""

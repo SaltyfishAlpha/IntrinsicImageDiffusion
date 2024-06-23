@@ -1,0 +1,5 @@
+config_path: models/shadow_prediction/config.yaml
+ckpt_path: /home/zqh_1/IntrinsicImageDiffusion/logs/train/runs/2024-06-20_16-39-41/checkpoints/last.ckpt
+num_samples: 10
+sampling_batch_size: 1
+

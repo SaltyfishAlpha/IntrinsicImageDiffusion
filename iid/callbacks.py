@@ -510,6 +510,106 @@ class DiffusionSampler(ScheduledCallback):
         return output
 
 
+class ShadowSampler(ScheduledCallback):
+    def __init__(self,
+                 sanple_id,
+                 n_samples=1,
+                 keys_to_log="*",
+                 stage=TrainStage.Training.value,
+                 context="shadow_sampler",
+                 transform=None,
+                 sampler=None,
+                 log_schedule=None,
+                 sample_kwargs=dict()):
+        super().__init__(log_schedule=log_schedule)
+        self.module_logger = init_logger()
+
+        self.sanple_id = sanple_id
+        self.n_samples = n_samples
+        self.keys_to_log = keys_to_log
+        self.stage = stage
+        self.transform = transform
+
+        self.sampler = sampler
+
+        self.context = context
+
+        self.sample_kwargs = sample_kwargs
+
+        self.dataset = None
+
+    def get_samples(self, datamodule, pl_module):
+        # Collect all related information
+        samples = Batch()
+        samples.module_device = pl_module.device
+        samples.scene_id = self.sanple_id
+
+        if self.dataset is None:
+            self.dataset = datamodule.load_dataset(self.stage)
+            self.fix_sampling_to_center(self.dataset.transform)
+        samples.dataset = self.dataset
+
+        # Collect datapoints
+        sampler = SubsetSequentialSampler(indices=[self.sanple_id])
+        samples.dataloader = DataLoader(samples.dataset, batch_size=1, sampler=sampler, pin_memory=True)
+
+        return samples
+
+    def fix_sampling_to_center(self, transform):
+        if isinstance(transform, MutableMapping):
+            self.fix_sampling_to_center(list(transform.values()))
+        elif isinstance(transform, Iterable):
+            for t in transform:
+                self.fix_sampling_to_center(t)
+        elif isinstance(transform, BatchTransform):
+            for t in transform.transform.values():
+                self.fix_sampling_to_center(t)
+        elif isinstance(transform, Compose):
+            self.fix_sampling_to_center(transform.transforms)
+        elif hasattr(transform, "center_only"):
+            transform.center_only = True
+
+    @torch.no_grad()
+    def __call__(self, trainer, pl_module, *args, **kwargs):
+        # Init
+        self.num_max_timesteps = pl_module.diffusion_module.num_timesteps
+
+        # Collect all related information
+        samples = self.get_samples(trainer.datamodule, pl_module)
+
+        # Iterate over the samples
+        x_0s = []
+        for batch in samples.dataloader:
+            # Prepare the batch
+            batch = trainer.precision_plugin.convert_input(batch)
+            batch = trainer.lightning_module._on_before_batch_transfer(batch)
+            batch = trainer.strategy.batch_to_device(batch)
+            batch = Batch.from_dict(batch)
+
+            with trainer.strategy.precision_plugin.train_step_context():
+                # Run the reverse process
+                x_0_pred = self.sample(batch, pl_module)
+                x_0s.append(x_0_pred.flatten(separator="/").query_wildcard(self.keys_to_log))
+        x_0s = Batch.from_batch_list(*x_0s)
+        x_0s = x_0s.map(torch.cat, dim=0)
+
+        # Apply the transform
+        if self.transform is not None:
+            x_0s = self.transform(x_0s)
+
+        # Log the reverse samples
+        log_anything(logger=trainer.logger, name=self.context, data=x_0s.map(list))
+
+    def sample(self, batch, pl_module):
+        # # Run the reverse process
+        conditioning_img = pl_module.get_conditioning_from_batch(batch)
+        conditioning_img = (conditioning_img + 1) / 2  # The sampling function expects range [0, 1]
+        output = pl_module.sample(conditioning_img=conditioning_img,
+                                  batch_size=self.n_samples)
+
+        return Batch(shadow_free=output)
+
+
 class BatchLogger(ScheduledCallback):
     def __init__(self,
                  batch_keys_to_log=None,
